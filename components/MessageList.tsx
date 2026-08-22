@@ -1,32 +1,33 @@
 ﻿"use client";
 
-import type { Message } from "@ai-sdk/react";
+import { useEffect, useRef } from "react";
+import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 
 type MessageListProps = {
-  messages: Message[];
+  messages: UIMessage[];
+  isStreaming?: boolean;
 };
 
-function getMessageText(message: Message): string {
-  if (typeof message.content === "string") {
-    return message.content;
-  }
-
-  if (Array.isArray(message.parts)) {
-    return message.parts
-      .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .map((part) => part.text)
-      .join("");
-  }
-
-  return "";
+function getMessageText(message: UIMessage): string {
+  return message.parts
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join("");
 }
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({ messages, isStreaming }: MessageListProps) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isStreaming]);
+
   return (
-    <div className="flex flex-1 flex-col gap-4 overflow-y-auto py-6">
-      {messages.map((message) => {
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-6">
+      {messages.map((message, index) => {
         const text = getMessageText(message);
+        const isLast = index === messages.length - 1;
 
         if (message.role === "user") {
           return (
@@ -38,20 +39,25 @@ export function MessageList({ messages }: MessageListProps) {
           );
         }
 
-        if (message.role === "assistant" && text) {
-          return (
-            <div key={message.id} className="flex justify-start">
-              <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-border bg-surface px-4 py-3 text-sm text-foreground">
+        if (message.role !== "assistant") {
+          return null;
+        }
+
+        return (
+          <div key={message.id} className="flex justify-start">
+            <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-border bg-surface px-4 py-3 text-sm text-foreground">
+              {text ? (
                 <div className="markdown-body">
                   <ReactMarkdown>{text}</ReactMarkdown>
                 </div>
-              </div>
+              ) : isStreaming && isLast ? (
+                <span className="inline-block h-4 w-1 animate-pulse bg-accent-light" />
+              ) : null}
             </div>
-          );
-        }
-
-        return null;
+          </div>
+        );
       })}
+      <div ref={bottomRef} />
     </div>
   );
 }

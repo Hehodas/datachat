@@ -1,12 +1,8 @@
 ﻿# DataChat
 
-AI-powered database Q&A chatbot for a telecom CRM stored in Supabase. Ask about customers by name or search by topic (invoices, incidents, equipment, subscriptions) and get a structured summary streamed back in a ChatGPT-style interface.
+ChatGPT-style Q&A over a telecom CRM in Supabase. Ask about a customer or topic; the server-side agent searches the database and streams a structured summary.
 
-## Prerequisites
-
-- Node.js 18+
-- OpenAI API key
-- Supabase project with the CRM schema (server secret key required — RLS is enabled with no anon policies)
+The browser talks only to `/api/chat`. OpenAI and Supabase secret keys stay on the server.
 
 ## Setup
 
@@ -18,12 +14,14 @@ cp .env.example .env.local
 Fill in `.env.local`:
 
 ```
-OPENAI_API_KEY=your_openai_key
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SECRET_KEY=your_sb_secret_key
+OPENAI_API_KEY=
+SUPABASE_URL=
+SUPABASE_SECRET_KEY=
 ```
 
-## Run locally
+Never commit `.env.local`. `.gitignore` already excludes `.env*` (except `.env.example`).
+
+## Run
 
 ```bash
 npm run dev
@@ -31,19 +29,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Example questions
-
-Try these in the chat:
-
-- **Tell me about Eleanor Shellstrop**
-- **What do we know about Chidi Anagonye?**
-- **Show unpaid invoices**
-- **What open incidents do we have?**
-- **Find Madam Peterson** (returns no matches — she is not in the database)
-
-Sample customers in the demo database: **Eleanor Shellstrop**, **Chidi Anagonye**, **Tahani Al-Jamil**.
-
-## Tests
+## Test
 
 ```bash
 npm test
@@ -55,18 +41,20 @@ Watch mode:
 npm run test:watch
 ```
 
-- **Unit tests** mock Supabase — no network required.
-- **Route integration tests** mock OpenAI — no token spend.
-- **Supabase integration tests** hit the live project when `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are set in `.env.local`; they skip automatically otherwise.
+Unit tests mock Supabase. Chat route tests mock OpenAI / `streamText` (no live token spend). Read-only live Supabase tool tests run only when `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are set; otherwise they are skipped.
 
-## Architecture
+## Example questions
 
-- **Frontend**: Next.js App Router, `useChat` from `@ai-sdk/react`, dark navy UI
-- **Backend**: `POST /api/chat` with OpenAI `gpt-4o` and agentic tool loop
-- **Tools**: `searchCustomers`, `getCustomerDossier`, `searchByTopic` (server-side Supabase secret client)
+Demo customers in the CRM:
 
-Secrets never leave the server. The browser only talks to `/api/chat`.
+- **Eleanor Shellstrop**
+- **Chidi Anagonye**
+- **Tahani Al-Jamil**
 
-## Security note
+Try:
 
-Rotate any API keys that were shared in chat or committed by mistake. Keep secrets in `.env.local` only — never commit them.
+- Tell me about Eleanor Shellstrop
+- Show unpaid invoices
+- What open incidents do we have?
+
+There is no Madam Peterson in the data; that search should return a clear “no matching records” answer.

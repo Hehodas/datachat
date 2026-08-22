@@ -30,21 +30,38 @@ vi.mock("ai", async (importOriginal) => {
 
 import { POST } from "../route";
 
-function createMockStreamResponse(text: string) {
+type ExecutableTool = {
+  execute: (input: Record<string, unknown>) => Promise<unknown>;
+};
+
+function userMessage(text: string) {
+  return {
+    id: "user-1",
+    role: "user" as const,
+    parts: [{ type: "text" as const, text }],
+  };
+}
+
+function createMockStreamResponse(text: string, beforeStream?: () => Promise<void>) {
   const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoder.encode(`0:${JSON.stringify(text)}\n`));
-      controller.close();
-    },
-  });
 
   return {
-    toDataStreamResponse: () =>
-      new Response(stream, {
-        status: 200,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      }),
+    toUIMessageStreamResponse: () =>
+      new Response(
+        new ReadableStream({
+          async start(controller) {
+            if (beforeStream) {
+              await beforeStream();
+            }
+            controller.enqueue(encoder.encode(text));
+            controller.close();
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        },
+      ),
   };
 }
 
@@ -86,19 +103,19 @@ describe("POST /api/chat", () => {
       },
     });
 
-    let capturedTools: Record<string, { execute: (args: unknown) => Promise<unknown> }> = {};
-
-    mockStreamText.mockImplementation(({ tools }) => {
-      capturedTools = tools;
-      return createMockStreamResponse("Summary for Eleanor Shellstrop.");
-    });
+    mockStreamText.mockImplementation(({ tools }: { tools: Record<string, ExecutableTool> }) =>
+      createMockStreamResponse("Summary for Eleanor Shellstrop.", async () => {
+        await tools.searchCustomers.execute({ query: "Eleanor" });
+        await tools.getCustomerDossier.execute({ customerId: "cust-1" });
+      }),
+    );
 
     const response = await POST(
       new Request("http://localhost/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [{ role: "user", content: "Tell me about Eleanor" }],
+          messages: [userMessage("Tell me about Eleanor")],
         }),
       }),
     );
@@ -106,48 +123,45 @@ describe("POST /api/chat", () => {
     expect(response.status).toBe(200);
     expect(mockStreamText).toHaveBeenCalledOnce();
 
-    await capturedTools.searchCustomers.execute({ query: "Eleanor" });
+    const text = await response.text();
+    expect(text).toContain("Eleanor Shellstrop");
     expect(mockSearchCustomers).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ query: "Eleanor" }),
     );
-
-    await capturedTools.getCustomerDossier.execute({ customerId: "cust-1" });
     expect(mockGetCustomerDossier).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ customerId: "cust-1" }),
     );
-
-    const text = await response.text();
-    expect(text).toContain("Eleanor Shellstrop");
   });
 
   it("handles no-match path with 200 and empty search results", async () => {
     mockSearchCustomers.mockResolvedValue({ success: true, data: [] });
 
-    let capturedTools: Record<string, { execute: (args: unknown) => Promise<unknown> }> = {};
-
-    mockStreamText.mockImplementation(({ tools }) => {
-      capturedTools = tools;
-      return createMockStreamResponse("No matching records were found.");
-    });
+    mockStreamText.mockImplementation(({ tools }: { tools: Record<string, ExecutableTool> }) =>
+      createMockStreamResponse("No matching records were found.", async () => {
+        const searchResult = await tools.searchCustomers.execute({ query: "Peterson" });
+        expect(searchResult).toEqual({ success: true, data: [] });
+      }),
+    );
 
     const response = await POST(
       new Request("http://localhost/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [{ role: "user", content: "Find Madam Peterson" }],
+          messages: [userMessage("Find Madam Peterson")],
         }),
       }),
     );
 
     expect(response.status).toBe(200);
 
-    const searchResult = await capturedTools.searchCustomers.execute({ query: "Peterson" });
-    expect(searchResult).toEqual({ success: true, data: [] });
-
     const text = await response.text();
     expect(text).toContain("No matching records were found");
+    expect(mockSearchCustomers).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ query: "Peterson" }),
+    );
   });
 });

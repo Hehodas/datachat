@@ -14,6 +14,7 @@ export function createServerSupabaseClient(): DataChatSupabaseClient {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
+      detectSessionInUrl: false,
     },
   });
 }

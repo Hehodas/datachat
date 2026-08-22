@@ -11,7 +11,7 @@ export type Customer = {
   email: string;
   phone_number: string | null;
   address: string | null;
-  created_at: string;
+  created_at: string | null;
 };
 
 export type CustomerDossier = {
@@ -40,7 +40,12 @@ export async function searchCustomers(
   client: DataChatSupabaseClient,
   { query }: { query: string },
 ): Promise<ToolResult<Customer[]>> {
-  const pattern = ilikePattern(query.trim());
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return { success: true, data: [] };
+  }
+
+  const pattern = ilikePattern(trimmed);
 
   const { data, error } = await client
     .from("customers")
@@ -114,7 +119,21 @@ export async function searchByTopic(
   client: DataChatSupabaseClient,
   { query }: { query: string },
 ): Promise<ToolResult<TopicSearchResults>> {
-  const pattern = ilikePattern(query.trim());
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return {
+      success: true,
+      data: {
+        incidents: [],
+        interaction_logs: [],
+        subscriptions: [],
+        equipment: [],
+        invoices: [],
+      },
+    };
+  }
+
+  const pattern = ilikePattern(trimmed);
 
   const searches = [
     {

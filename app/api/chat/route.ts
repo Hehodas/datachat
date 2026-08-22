@@ -1,5 +1,11 @@
 ﻿import { openai } from "@ai-sdk/openai";
-import { streamText, tool } from "ai";
+import {
+  convertToModelMessages,
+  stepCountIs,
+  streamText,
+  tool,
+  type UIMessage,
+} from "ai";
 import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase";
 import {
@@ -21,7 +27,7 @@ Rules:
 - Be concise but thorough. Use markdown headings and bullet lists for readability.`;
 
 export async function POST(req: Request) {
-  let body: { messages?: unknown };
+  let body: unknown;
 
   try {
     body = await req.json();
@@ -29,21 +35,28 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!body.messages || !Array.isArray(body.messages)) {
+  if (
+    !body ||
+    typeof body !== "object" ||
+    !("messages" in body) ||
+    !Array.isArray((body as { messages: unknown }).messages)
+  ) {
     return Response.json({ error: "Missing messages" }, { status: 400 });
   }
 
+  const { messages } = body as { messages: UIMessage[] };
   const client = createServerSupabaseClient();
 
   const result = streamText({
     model: openai("gpt-4o"),
     system: SYSTEM_PROMPT,
-    messages: body.messages,
+    messages: convertToModelMessages(messages),
+    stopWhen: stepCountIs(5),
     tools: {
       searchCustomers: tool({
         description:
           "Search customers by name or email. Use when the user asks about a specific person.",
-        parameters: z.object({
+        inputSchema: z.object({
           query: z.string().describe("Name or email fragment to search for"),
         }),
         execute: async ({ query }) => searchCustomers(client, { query }),
@@ -51,7 +64,7 @@ export async function POST(req: Request) {
       getCustomerDossier: tool({
         description:
           "Load a full customer dossier including subscriptions, invoices, payment methods, equipment, incidents, and interaction logs.",
-        parameters: z.object({
+        inputSchema: z.object({
           customerId: z.string().uuid().describe("The customer UUID from searchCustomers"),
         }),
         execute: async ({ customerId }) => getCustomerDossier(client, { customerId }),
@@ -59,14 +72,13 @@ export async function POST(req: Request) {
       searchByTopic: tool({
         description:
           "Search across incidents, support notes, subscriptions, equipment, and invoice status by topic keyword.",
-        parameters: z.object({
+        inputSchema: z.object({
           query: z.string().describe("Topic keyword such as unpaid, open, fiber, etc."),
         }),
         execute: async ({ query }) => searchByTopic(client, { query }),
       }),
     },
-    maxSteps: 5,
   });
 
-  return result.toDataStreamResponse();
+  return result.toUIMessageStreamResponse();
 }

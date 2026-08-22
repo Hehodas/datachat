@@ -21,7 +21,7 @@ function createChain(result: QueryResult) {
   return chain;
 }
 
-function createMockClient(handlers: Record<string, () => ReturnType<typeof createChain>>) {
+function createMockClient(handlers: Record<string, () => object>) {
   return {
     from: vi.fn((table: string) => {
       const handler = handlers[table];
@@ -94,6 +94,17 @@ describe("searchCustomers", () => {
     if (!result.success) {
       expect(result.error).toBe("connection failed");
     }
+  });
+
+  it("returns an empty list without querying when the search string is blank", async () => {
+    const client = createMockClient({});
+    const result = await searchCustomers(client, { query: "   " });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual([]);
+    }
+    expect(client.from).not.toHaveBeenCalled();
   });
 });
 
