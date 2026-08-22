@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockSearchCustomers = vi.fn();
 const mockGetCustomerDossier = vi.fn();

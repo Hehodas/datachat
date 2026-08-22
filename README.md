@@ -1,4 +1,4 @@
-﻿# DataChat
+# DataChat
 
 ChatGPT-style Q&A over a telecom CRM in Supabase. Ask about a customer or topic; the server-side agent searches the database and streams a structured summary.
 

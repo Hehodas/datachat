@@ -57,8 +57,9 @@ describe("searchCustomers", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data).toHaveLength(1);
-      expect(result.data[0].last_name).toBe("Shellstrop");
+      expect(result.data.matches).toHaveLength(1);
+      expect(result.data.matches[0].customer.last_name).toBe("Shellstrop");
+      expect(result.data.matches[0].match).toBe("full");
     }
   });
 
@@ -75,7 +76,64 @@ describe("searchCustomers", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data).toEqual([]);
+      expect(result.data.matches).toEqual([]);
+    }
+  });
+
+  it("finds a customer when the query is a full first and last name", async () => {
+    const eleanor = {
+      id: "cust-1",
+      first_name: "Eleanor",
+      last_name: "Shellstrop",
+      email: "eleanor@example.com",
+      phone_number: "555-0100",
+      address: "123 Main St",
+      created_at: "2024-01-01T00:00:00Z",
+    };
+
+    const client = createMockClient({
+      customers: () =>
+        createChain({
+          data: [eleanor],
+          error: null,
+        }),
+    });
+
+    const result = await searchCustomers(client, { query: "Eleanor Shellstrop" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.matches).toHaveLength(1);
+      expect(result.data.matches[0].customer.first_name).toBe("Eleanor");
+      expect(result.data.matches[0].match).toBe("full");
+    }
+    expect(client.from).toHaveBeenCalled();
+  });
+
+  it("marks a last-name-only hit as partial when the query includes a different first name", async () => {
+    const eleanor = {
+      id: "cust-1",
+      first_name: "Eleanor",
+      last_name: "Shellstrop",
+      email: "eleanor@example.com",
+      phone_number: "555-0100",
+      address: "123 Main St",
+      created_at: "2024-01-01T00:00:00Z",
+    };
+
+    const client = createMockClient({
+      customers: () =>
+        createChain({
+          data: [eleanor],
+          error: null,
+        }),
+    });
+
+    const result = await searchCustomers(client, { query: "Tahani Shellstrop" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.matches[0].match).toBe("partial");
     }
   });
 
@@ -102,7 +160,7 @@ describe("searchCustomers", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data).toEqual([]);
+      expect(result.data.matches).toEqual([]);
     }
     expect(client.from).not.toHaveBeenCalled();
   });

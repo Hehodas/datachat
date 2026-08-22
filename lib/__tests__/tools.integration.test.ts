@@ -14,10 +14,25 @@ describeIntegration("tools integration (live Supabase)", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.length).toBeGreaterThan(0);
-      const match = result.data.find((c) => c.last_name === "Shellstrop");
+      expect(result.data.matches.length).toBeGreaterThan(0);
+      const match = result.data.matches.find((hit) => hit.customer.last_name === "Shellstrop");
       expect(match).toBeDefined();
-      expect(match?.first_name).toBe("Eleanor");
+      expect(match?.customer.first_name).toBe("Eleanor");
+    }
+  });
+
+  it('searchCustomers("Eleanor Shellstrop") returns Eleanor as a full match', async () => {
+    const client = createServerSupabaseClient();
+    const result = await searchCustomers(client, { query: "Eleanor Shellstrop" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const match = result.data.matches.find(
+        (hit) => hit.customer.last_name === "Shellstrop",
+      );
+      expect(match).toBeDefined();
+      expect(match?.customer.first_name).toBe("Eleanor");
+      expect(match?.match).toBe("full");
     }
   });
 
@@ -27,7 +42,7 @@ describeIntegration("tools integration (live Supabase)", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data).toEqual([]);
+      expect(result.data.matches).toEqual([]);
     }
   });
 
@@ -35,12 +50,12 @@ describeIntegration("tools integration (live Supabase)", () => {
     const client = createServerSupabaseClient();
     const search = await searchCustomers(client, { query: "Shellstrop" });
     expect(search.success).toBe(true);
-    if (!search.success || search.data.length === 0) {
+    if (!search.success || search.data.matches.length === 0) {
       throw new Error("Expected Eleanor Shellstrop in search results");
     }
 
     const dossier = await getCustomerDossier(client, {
-      customerId: search.data[0].id,
+      customerId: search.data.matches[0].customer.id,
     });
 
     expect(dossier.success).toBe(true);
