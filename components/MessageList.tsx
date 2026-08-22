@@ -43,6 +43,10 @@ export function MessageList({ messages, isStreaming }: MessageListProps) {
           return null;
         }
 
+        if (!text.trim() && !(isStreaming && isLast)) {
+          return null;
+        }
+
         return (
           <div key={message.id} className="flex justify-start">
             <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-border bg-surface px-4 py-3 text-sm text-foreground">
