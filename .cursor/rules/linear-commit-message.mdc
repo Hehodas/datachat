@@ -1,0 +1,31 @@
+﻿---
+description: When work comes from a Linear issue, put that issue identifier in square brackets at the start of the git commit subject.
+alwaysApply: true
+---
+
+# Linear identifier in commit messages
+
+If the work being committed is from a **Linear** task (user named the issue, pasted a Linear URL, or the branch/title includes the identifier), the commit **subject** must start with that ticket identifier in square brackets.
+
+## Format
+
+```
+[TEAM-123] Short subject focused on why
+```
+
+- Use the Linear identifier only (`ABC-123`), not the issue title and not the full `linear.app` URL.
+- One pair of square brackets, immediately at the start of the subject, then a space, then the rest of the message.
+- If several issues apply, use the **primary** ticket for this commit.
+
+## Examples
+
+```
+[DAT-42] Fail closed when Basic Auth env vars are missing
+[ENG-108] Quote ilike terms so topic search cannot inject filters
+```
+
+## Do not
+
+- Invent an identifier when the work is not tied to Linear — omit the brackets entirely.
+- Put the id in the body only, in parentheses, or after the subject.
+- Repeat the identifier if the subject already starts with `[TEAM-123]`.
