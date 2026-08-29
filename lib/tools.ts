@@ -1,4 +1,4 @@
-﻿import type { DataChatSupabaseClient } from "./supabase";
+import type { DataChatSupabaseClient } from "./supabase";
 
 export type ToolSuccess<T> = { success: true; data: T };
 export type ToolFailure = { success: false; error: string };
@@ -14,26 +14,103 @@ export type Customer = {
   created_at: string | null;
 };
 
+export type Subscription = {
+  id: string;
+  customer_id: string;
+  service_category: string;
+  plan_name: string;
+  status: string;
+  monthly_price: number;
+  activation_date: string;
+};
+
+export type Invoice = {
+  id: string;
+  customer_id: string;
+  billing_period: string;
+  amount_due: number;
+  issue_date: string;
+  due_date: string;
+  status: string;
+};
+
+export type PaymentMethod = {
+  provider: string;
+  payment_type: string;
+  last_four_digits: string;
+  is_default: boolean;
+};
+
+export type Equipment = {
+  id: string;
+  customer_id: string;
+  device_type: string;
+  model_name: string;
+  serial_number: string;
+  warranty_expiration: string | null;
+};
+
+export type Incident = {
+  id: string;
+  customer_id: string;
+  issue_type: string;
+  description: string;
+  status: string;
+  created_at: string;
+  resolved_at: string | null;
+};
+
+export type InteractionLog = {
+  id: string;
+  customer_id: string;
+  channel: string;
+  agent_notes: string;
+  interaction_date: string;
+};
+
 export type CustomerDossier = {
   customer: Customer;
-  subscriptions: Record<string, unknown>[];
-  invoices: Record<string, unknown>[];
-  payment_methods: Record<string, unknown>[];
-  equipment: Record<string, unknown>[];
-  incidents: Record<string, unknown>[];
-  interaction_logs: Record<string, unknown>[];
+  subscriptions: Subscription[];
+  invoices: Invoice[];
+  payment_methods: PaymentMethod[];
+  equipment: Equipment[];
+  incidents: Incident[];
+  interaction_logs: InteractionLog[];
+  truncated?: boolean;
 };
 
 export type TopicSearchResults = {
-  incidents: Record<string, unknown>[];
-  interaction_logs: Record<string, unknown>[];
-  subscriptions: Record<string, unknown>[];
-  equipment: Record<string, unknown>[];
-  invoices: Record<string, unknown>[];
+  incidents: Incident[];
+  interaction_logs: InteractionLog[];
+  subscriptions: Subscription[];
+  equipment: Equipment[];
+  invoices: Invoice[];
+  truncated?: boolean;
 };
 
 const CUSTOMER_COLUMNS =
   "id, first_name, last_name, email, phone_number, address, created_at";
+
+const SUBSCRIPTION_COLUMNS =
+  "id, customer_id, service_category, plan_name, status, monthly_price, activation_date";
+
+const INVOICE_COLUMNS =
+  "id, customer_id, billing_period, amount_due, issue_date, due_date, status";
+
+const PAYMENT_METHOD_COLUMNS = "provider, payment_type, last_four_digits, is_default";
+
+const EQUIPMENT_COLUMNS =
+  "id, customer_id, device_type, model_name, serial_number, warranty_expiration";
+
+const INCIDENT_COLUMNS =
+  "id, customer_id, issue_type, description, status, created_at, resolved_at";
+
+const INTERACTION_LOG_COLUMNS = "id, customer_id, channel, agent_notes, interaction_date";
+
+const CUSTOMER_SEARCH_LIMIT = 25;
+const CHILD_ROW_LIMIT = 50;
+
+const DB_ERROR = "database query failed";
 
 export type CustomerMatchQuality = "full" | "partial";
 
@@ -45,23 +122,27 @@ export type CustomerSearchHit = {
 export type CustomerSearchResult = {
   query: string;
   matches: CustomerSearchHit[];
+  truncated?: boolean;
 };
 
-function ilikePattern(query: string): string {
-  return `%${query}%`;
+export function escapeIlike(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/[%_]/g, "\\$&");
 }
 
-function searchTokens(query: string): string[] {
+export function quoteIlikeTerm(term: string): string {
+  return `"%${escapeIlike(term)}%"`;
+}
+
+function ilikePattern(query: string): string {
+  return `%${escapeIlike(query)}%`;
+}
+
+export function searchTokens(query: string): string[] {
   return query
     .trim()
     .split(/\s+/)
-    .map((token) => token.replace(/[.,;:'"]/g, ""))
+    .map((token) => token.replace(/^[.,;:"']+|[.,;:"']+$/g, ""))
     .filter((token) => token.length > 0);
-}
-
-function quoteIlikeTerm(term: string): string {
-  const escaped = term.replace(/\\/g, "\\\\").replace(/[%_]/g, "\\$&").replace(/"/g, "");
-  return `"%${escaped}%"`;
 }
 
 function orFilterForTerms(terms: string[]): string {
@@ -85,16 +166,19 @@ export function classifyCustomerMatch(
   customer: Customer,
   tokens: string[],
 ): CustomerMatchQuality {
+  const firstName = customer.first_name ?? "";
+  const lastName = customer.last_name ?? "";
+  const email = customer.email ?? "";
+
   if (tokens.length === 0) {
     return "partial";
   }
 
   if (tokens.length === 1) {
     const token = tokens[0];
-    const email = customer.email ?? "";
     if (
-      containsInsensitive(customer.first_name, token) ||
-      containsInsensitive(customer.last_name, token) ||
+      containsInsensitive(firstName, token) ||
+      containsInsensitive(lastName, token) ||
       containsInsensitive(email, token)
     ) {
       return "full";
@@ -105,31 +189,15 @@ export function classifyCustomerMatch(
   const firstToken = tokens[0];
   const lastToken = tokens[tokens.length - 1];
   const firstThenLast =
-    containsInsensitive(customer.first_name, firstToken) &&
-    containsInsensitive(customer.last_name, lastToken);
+    containsInsensitive(firstName, firstToken) && containsInsensitive(lastName, lastToken);
   const lastThenFirst =
-    containsInsensitive(customer.first_name, lastToken) &&
-    containsInsensitive(customer.last_name, firstToken);
+    containsInsensitive(firstName, lastToken) && containsInsensitive(lastName, firstToken);
 
   return firstThenLast || lastThenFirst ? "full" : "partial";
 }
 
-function firstLastPairs(tokens: string[]): Array<[string, string]> {
-  if (tokens.length < 2) {
-    return [];
-  }
-
-  const pairs = new Map<string, [string, string]>();
-  const add = (first: string, last: string) => {
-    pairs.set(`${first.toLowerCase()}|${last.toLowerCase()}`, [first, last]);
-  };
-
-  add(tokens[0], tokens[tokens.length - 1]);
-  add(tokens[tokens.length - 1], tokens[0]);
-  add(tokens[0], tokens.slice(1).join(" "));
-  add(tokens.slice(0, -1).join(" "), tokens[tokens.length - 1]);
-
-  return [...pairs.values()];
+function logDbError(context: string, message: string): void {
+  console.error(`[tools] ${context}: ${message}`);
 }
 
 export async function searchCustomers(
@@ -146,38 +214,21 @@ export async function searchCustomers(
     return { success: true, data: { query: trimmed, matches: [] } };
   }
 
-  const byId = new Map<string, Customer>();
-
-  const mergeRows = (rows: Customer[] | null | undefined) => {
-    for (const row of rows ?? []) {
-      byId.set(row.id, row);
-    }
-  };
-
   const { data: tokenRows, error: tokenError } = await client
     .from("customers")
     .select(CUSTOMER_COLUMNS)
-    .or(orFilterForTerms(tokens));
+    .or(orFilterForTerms(tokens))
+    .limit(CUSTOMER_SEARCH_LIMIT);
 
   if (tokenError) {
-    return { success: false, error: tokenError.message };
-  }
-  mergeRows(tokenRows as Customer[] | null);
-
-  for (const [firstName, lastName] of firstLastPairs(tokens)) {
-    const { data, error } = await client
-      .from("customers")
-      .select(CUSTOMER_COLUMNS)
-      .ilike("first_name", ilikePattern(firstName))
-      .ilike("last_name", ilikePattern(lastName));
-
-    if (error) {
-      return { success: false, error: error.message };
-    }
-    mergeRows(data as Customer[] | null);
+    logDbError("searchCustomers", tokenError.message);
+    return { success: false, error: DB_ERROR };
   }
 
-  const matches: CustomerSearchHit[] = [...byId.values()]
+  const rows = (tokenRows ?? []) as Customer[];
+  const truncated = rows.length >= CUSTOMER_SEARCH_LIMIT;
+
+  const matches: CustomerSearchHit[] = rows
     .map((customer) => ({
       customer,
       match: classifyCustomerMatch(customer, tokens),
@@ -186,12 +237,19 @@ export async function searchCustomers(
       if (a.match !== b.match) {
         return a.match === "full" ? -1 : 1;
       }
-      return `${a.customer.last_name} ${a.customer.first_name}`.localeCompare(
-        `${b.customer.last_name} ${b.customer.first_name}`,
+      return `${a.customer.last_name ?? ""} ${a.customer.first_name ?? ""}`.localeCompare(
+        `${b.customer.last_name ?? ""} ${b.customer.first_name ?? ""}`,
       );
     });
 
-  return { success: true, data: { query: trimmed, matches } };
+  return {
+    success: true,
+    data: {
+      query: trimmed,
+      matches,
+      ...(truncated ? { truncated: true } : {}),
+    },
+  };
 }
 
 export async function getCustomerDossier(
@@ -200,52 +258,97 @@ export async function getCustomerDossier(
 ): Promise<ToolResult<CustomerDossier>> {
   const { data: customer, error: customerError } = await client
     .from("customers")
-    .select("id, first_name, last_name, email, phone_number, address, created_at")
+    .select(CUSTOMER_COLUMNS)
     .eq("id", customerId)
     .maybeSingle();
 
   if (customerError) {
-    return { success: false, error: customerError.message };
+    logDbError("getCustomerDossier/customers", customerError.message);
+    return { success: false, error: DB_ERROR };
   }
 
   if (!customer) {
     return { success: false, error: `No customer found with id ${customerId}` };
   }
 
-  const childTables = [
-    "subscriptions",
-    "invoices",
-    "payment_methods",
-    "equipment",
-    "incidents",
-    "interaction_logs",
-  ] as const;
+  const [
+    subscriptionsResult,
+    invoicesResult,
+    paymentMethodsResult,
+    equipmentResult,
+    incidentsResult,
+    interactionLogsResult,
+  ] = await Promise.all([
+    client
+      .from("subscriptions")
+      .select(SUBSCRIPTION_COLUMNS)
+      .eq("customer_id", customerId)
+      .limit(CHILD_ROW_LIMIT),
+    client
+      .from("invoices")
+      .select(INVOICE_COLUMNS)
+      .eq("customer_id", customerId)
+      .limit(CHILD_ROW_LIMIT),
+    client
+      .from("payment_methods")
+      .select(PAYMENT_METHOD_COLUMNS)
+      .eq("customer_id", customerId)
+      .limit(CHILD_ROW_LIMIT),
+    client
+      .from("equipment")
+      .select(EQUIPMENT_COLUMNS)
+      .eq("customer_id", customerId)
+      .limit(CHILD_ROW_LIMIT),
+    client
+      .from("incidents")
+      .select(INCIDENT_COLUMNS)
+      .eq("customer_id", customerId)
+      .limit(CHILD_ROW_LIMIT),
+    client
+      .from("interaction_logs")
+      .select(INTERACTION_LOG_COLUMNS)
+      .eq("customer_id", customerId)
+      .limit(CHILD_ROW_LIMIT),
+  ]);
 
-  const results = await Promise.all(
-    childTables.map(async (table) => {
-      const { data, error } = await client.from(table).select("*").eq("customer_id", customerId);
-      return { table, data, error };
-    }),
-  );
+  const results = [
+    { label: "subscriptions", result: subscriptionsResult },
+    { label: "invoices", result: invoicesResult },
+    { label: "payment_methods", result: paymentMethodsResult },
+    { label: "equipment", result: equipmentResult },
+    { label: "incidents", result: incidentsResult },
+    { label: "interaction_logs", result: interactionLogsResult },
+  ];
 
-  for (const { table, error } of results) {
-    if (error) {
-      return { success: false, error: `${table}: ${error.message}` };
+  for (const { label, result } of results) {
+    if (result.error) {
+      logDbError(`getCustomerDossier/${label}`, result.error.message);
+      return { success: false, error: DB_ERROR };
     }
   }
 
-  const byTable = Object.fromEntries(results.map(({ table, data }) => [table, data ?? []]));
+  const subscriptions = (subscriptionsResult.data ?? []) as Subscription[];
+  const invoices = (invoicesResult.data ?? []) as Invoice[];
+  const payment_methods = (paymentMethodsResult.data ?? []) as PaymentMethod[];
+  const equipment = (equipmentResult.data ?? []) as Equipment[];
+  const incidents = (incidentsResult.data ?? []) as Incident[];
+  const interaction_logs = (interactionLogsResult.data ?? []) as InteractionLog[];
+
+  const truncated = results.some(
+    ({ result }) => (result.data?.length ?? 0) >= CHILD_ROW_LIMIT,
+  );
 
   return {
     success: true,
     data: {
       customer: customer as Customer,
-      subscriptions: byTable.subscriptions,
-      invoices: byTable.invoices,
-      payment_methods: byTable.payment_methods,
-      equipment: byTable.equipment,
-      incidents: byTable.incidents,
-      interaction_logs: byTable.interaction_logs,
+      subscriptions,
+      invoices,
+      payment_methods,
+      equipment,
+      incidents,
+      interaction_logs,
+      ...(truncated ? { truncated: true } : {}),
     },
   };
 }
@@ -268,64 +371,77 @@ export async function searchByTopic(
     };
   }
 
-  const pattern = ilikePattern(trimmed);
+  const pattern = quoteIlikeTerm(trimmed);
+  const agentNotesPattern = ilikePattern(trimmed);
 
-  const searches = [
-    {
-      key: "incidents" as const,
-      promise: client
-        .from("incidents")
-        .select("*")
-        .or(`description.ilike.${pattern},issue_type.ilike.${pattern}`),
-    },
-    {
-      key: "interaction_logs" as const,
-      promise: client.from("interaction_logs").select("*").ilike("agent_notes", pattern),
-    },
-    {
-      key: "subscriptions" as const,
-      promise: client
-        .from("subscriptions")
-        .select("*")
-        .or(`plan_name.ilike.${pattern},service_category.ilike.${pattern}`),
-    },
-    {
-      key: "equipment" as const,
-      promise: client
-        .from("equipment")
-        .select("*")
-        .or(`model_name.ilike.${pattern},device_type.ilike.${pattern}`),
-    },
-    {
-      key: "invoices" as const,
-      promise: client.from("invoices").select("*").ilike("status", pattern),
-    },
+  const [
+    incidentsResult,
+    interactionLogsResult,
+    subscriptionsResult,
+    equipmentResult,
+    invoicesResult,
+  ] = await Promise.all([
+    client
+      .from("incidents")
+      .select(INCIDENT_COLUMNS)
+      .or(`description.ilike.${pattern},issue_type.ilike.${pattern}`)
+      .limit(CHILD_ROW_LIMIT),
+    client
+      .from("interaction_logs")
+      .select(INTERACTION_LOG_COLUMNS)
+      .ilike("agent_notes", agentNotesPattern)
+      .limit(CHILD_ROW_LIMIT),
+    client
+      .from("subscriptions")
+      .select(SUBSCRIPTION_COLUMNS)
+      .or(`plan_name.ilike.${pattern},service_category.ilike.${pattern}`)
+      .limit(CHILD_ROW_LIMIT),
+    client
+      .from("equipment")
+      .select(EQUIPMENT_COLUMNS)
+      .or(`model_name.ilike.${pattern},device_type.ilike.${pattern}`)
+      .limit(CHILD_ROW_LIMIT),
+    client
+      .from("invoices")
+      .select(INVOICE_COLUMNS)
+      .ilike("status", agentNotesPattern)
+      .limit(CHILD_ROW_LIMIT),
+  ]);
+
+  const settled = [
+    { key: "incidents" as const, result: incidentsResult },
+    { key: "interaction_logs" as const, result: interactionLogsResult },
+    { key: "subscriptions" as const, result: subscriptionsResult },
+    { key: "equipment" as const, result: equipmentResult },
+    { key: "invoices" as const, result: invoicesResult },
   ];
 
-  const settled = await Promise.all(
-    searches.map(async ({ key, promise }) => {
-      const { data, error } = await promise;
-      return { key, data, error };
-    }),
-  );
-
-  for (const { key, error } of settled) {
-    if (error) {
-      return { success: false, error: `${key}: ${error.message}` };
+  for (const { key, result } of settled) {
+    if (result.error) {
+      logDbError(`searchByTopic/${key}`, result.error.message);
+      return { success: false, error: DB_ERROR };
     }
   }
 
-  const results: TopicSearchResults = {
-    incidents: [],
-    interaction_logs: [],
-    subscriptions: [],
-    equipment: [],
-    invoices: [],
+  const incidents = (incidentsResult.data ?? []) as Incident[];
+  const interaction_logs = (interactionLogsResult.data ?? []) as InteractionLog[];
+  const subscriptions = (subscriptionsResult.data ?? []) as Subscription[];
+  const equipment = (equipmentResult.data ?? []) as Equipment[];
+  const invoices = (invoicesResult.data ?? []) as Invoice[];
+
+  const truncated = settled.some(
+    ({ result }) => (result.data?.length ?? 0) >= CHILD_ROW_LIMIT,
+  );
+
+  return {
+    success: true,
+    data: {
+      incidents,
+      interaction_logs,
+      subscriptions,
+      equipment,
+      invoices,
+      ...(truncated ? { truncated: true } : {}),
+    },
   };
-
-  for (const { key, data } of settled) {
-    results[key] = data ?? [];
-  }
-
-  return { success: true, data: results };
 }

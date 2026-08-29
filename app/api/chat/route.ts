@@ -1,12 +1,13 @@
-﻿import { openai } from "@ai-sdk/openai";
+import { openai } from "@ai-sdk/openai";
 import {
   convertToModelMessages,
   stepCountIs,
   streamText,
   tool,
-  type UIMessage,
 } from "ai";
 import { z } from "zod";
+import { enforceChatAccess } from "@/lib/access";
+import { parseChatRequest } from "@/lib/chat-request";
 import { createServerSupabaseClient } from "@/lib/supabase";
 import {
   getCustomerDossier,
@@ -29,59 +30,88 @@ Rules:
 - If tools return no matching records, say clearly that nothing was found. Do not guess or fabricate data.
 - Be concise but thorough. Use markdown headings and bullet lists for readability.`;
 
-export async function POST(req: Request) {
-  let body: unknown;
+function invalidRequest(): Response {
+  return Response.json({ error: "Invalid request" }, { status: 400 });
+}
 
+function internalError(): Response {
+  return Response.json({ error: "Internal server error" }, { status: 500 });
+}
+
+export async function POST(req: Request) {
+  const denied = enforceChatAccess(req);
+  if (denied) {
+    return denied;
+  }
+
+  let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return invalidRequest();
   }
 
-  if (
-    !body ||
-    typeof body !== "object" ||
-    !("messages" in body) ||
-    !Array.isArray((body as { messages: unknown }).messages)
-  ) {
-    return Response.json({ error: "Missing messages" }, { status: 400 });
+  const messages = parseChatRequest(body);
+  if (!messages) {
+    return invalidRequest();
   }
 
-  const { messages } = body as { messages: UIMessage[] };
-  const client = createServerSupabaseClient();
+  let client;
+  try {
+    client = createServerSupabaseClient();
+  } catch (error) {
+    console.error("Supabase client creation failed", error);
+    return internalError();
+  }
 
-  const result = streamText({
-    model: openai("gpt-4o"),
-    system: SYSTEM_PROMPT,
-    messages: convertToModelMessages(messages),
-    stopWhen: stepCountIs(5),
-    tools: {
-      searchCustomers: tool({
-        description:
-          "Search customers by name or email. Pass the full name the user said; the search splits tokens and tries first/last name combinations. Results include match 'full' or 'partial'.",
-        inputSchema: z.object({
-          query: z.string().describe("Full name, name fragment, or email to search for"),
-        }),
-        execute: async ({ query }) => searchCustomers(client, { query }),
-      }),
-      getCustomerDossier: tool({
-        description:
-          "Load a full customer dossier including subscriptions, invoices, payment methods, equipment, incidents, and interaction logs.",
-        inputSchema: z.object({
-          customerId: z.string().uuid().describe("The customer UUID from searchCustomers"),
-        }),
-        execute: async ({ customerId }) => getCustomerDossier(client, { customerId }),
-      }),
-      searchByTopic: tool({
-        description:
-          "Search across incidents, support notes, subscriptions, equipment, and invoice status by topic keyword.",
-        inputSchema: z.object({
-          query: z.string().describe("Topic keyword such as unpaid, open, fiber, etc."),
-        }),
-        execute: async ({ query }) => searchByTopic(client, { query }),
-      }),
-    },
-  });
+  let modelMessages;
+  try {
+    modelMessages = convertToModelMessages(messages);
+  } catch (error) {
+    console.error("convertToModelMessages failed", error);
+    return invalidRequest();
+  }
 
-  return result.toUIMessageStreamResponse();
+  try {
+    const result = streamText({
+      model: openai("gpt-4o"),
+      system: SYSTEM_PROMPT,
+      messages: modelMessages,
+      stopWhen: stepCountIs(5),
+      onError: ({ error }) => {
+        console.error("Chat stream error:", error);
+      },
+      tools: {
+        searchCustomers: tool({
+          description:
+            "Search customers by name or email. Pass the full name the user said; the search splits tokens and tries first/last name combinations. Results include match 'full' or 'partial'.",
+          inputSchema: z.object({
+            query: z.string().describe("Full name, name fragment, or email to search for"),
+          }),
+          execute: async ({ query }) => searchCustomers(client, { query }),
+        }),
+        getCustomerDossier: tool({
+          description:
+            "Load a full customer dossier including subscriptions, invoices, payment methods, equipment, incidents, and interaction logs.",
+          inputSchema: z.object({
+            customerId: z.string().uuid().describe("The customer UUID from searchCustomers"),
+          }),
+          execute: async ({ customerId }) => getCustomerDossier(client, { customerId }),
+        }),
+        searchByTopic: tool({
+          description:
+            "Search across incidents, support notes, subscriptions, equipment, and invoice status by topic keyword.",
+          inputSchema: z.object({
+            query: z.string().describe("Topic keyword such as unpaid, open, fiber, etc."),
+          }),
+          execute: async ({ query }) => searchByTopic(client, { query }),
+        }),
+      },
+    });
+
+    return result.toUIMessageStreamResponse();
+  } catch (error) {
+    console.error("streamText failed", error);
+    return internalError();
+  }
 }

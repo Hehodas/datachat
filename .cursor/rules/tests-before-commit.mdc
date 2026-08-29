@@ -1,0 +1,27 @@
+﻿---
+description: Agents must run the Vitest suite and wait for a passing result before creating a git commit.
+alwaysApply: true
+---
+
+# Tests before commit
+
+Never create a git commit until `npm test` has been run **in this task**, after the last code change that will be committed, and it has **exited 0**.
+
+## Required sequence
+
+1. Stage only the files that belong in the commit (no `.env.local` or secrets).
+2. Run from the repo root (PowerShell; do not use bash `&&`):
+
+```powershell
+npm test
+```
+
+3. If any test **fails**, fix the failure and re-run `npm test`. Do **not** commit.
+4. If the command **exits 0**, then commit. Skipped live Supabase tests (`describe.skip` without env) count as pass.
+
+## Do not
+
+- Commit on a failed or interrupted test run
+- Skip tests because the change “looks small”, is docs-only, or only touches `.cursor/`
+- Use `--no-verify`, `--no-gpg-sign`, or otherwise bypass hooks to avoid tests
+- Treat `test:watch` as a substitute; only `npm test` (`vitest run`) counts

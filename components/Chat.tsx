@@ -1,8 +1,9 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { isToolOrDynamicToolUIPart, type UIMessage } from "ai";
+import { isToolOrDynamicToolUIPart } from "ai";
 import { useMemo, useState } from "react";
+import { getMessageText } from "@/lib/messages";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 
@@ -12,15 +13,9 @@ const EXAMPLE_PROMPTS = [
   "What open incidents do we have?",
 ];
 
-function getMessageText(message: UIMessage): string {
-  return message.parts
-    .filter((part): part is { type: "text"; text: string } => part.type === "text")
-    .map((part) => part.text)
-    .join("");
-}
-
 export function Chat() {
-  const { messages, sendMessage, status, error } = useChat();
+  const { messages, sendMessage, status, error, stop, clearError, regenerate } =
+    useChat();
   const [input, setInput] = useState("");
 
   const isBusy = status === "submitted" || status === "streaming";
@@ -48,6 +43,7 @@ export function Chat() {
     if (!trimmed || isBusy) {
       return;
     }
+    clearError();
     void sendMessage({ text: trimmed });
     setInput("");
   }
@@ -97,8 +93,25 @@ export function Chat() {
         )}
 
         {error && (
-          <div className="pb-2 text-center text-sm text-red-400">
-            Something went wrong. Please try again.
+          <div className="flex items-center justify-center gap-3 pb-2 text-sm text-red-400">
+            <span>Something went wrong. Please try again.</span>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => {
+                void regenerate();
+              }}
+              className="rounded-md border border-red-400/40 px-2 py-1 text-red-300 transition hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => clearError()}
+              className="rounded-md border border-red-400/40 px-2 py-1 text-red-300 transition hover:bg-red-400/10"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 
@@ -107,6 +120,7 @@ export function Chat() {
           isLoading={isBusy}
           onInputChange={setInput}
           onSubmit={submitPrompt}
+          onStop={stop}
         />
       </main>
     </div>

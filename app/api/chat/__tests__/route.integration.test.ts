@@ -34,6 +34,17 @@ type ExecutableTool = {
   execute: (input: Record<string, unknown>) => Promise<unknown>;
 };
 
+function authHeaders(extra: Record<string, string> = {}) {
+  const user = process.env.CHAT_BASIC_USER ?? "testuser";
+  const password = process.env.CHAT_BASIC_PASSWORD ?? "testpass";
+  const encoded = Buffer.from(`${user}:${password}`).toString("base64");
+  return {
+    Authorization: `Basic ${encoded}`,
+    "Content-Type": "application/json",
+    ...extra,
+  };
+}
+
 function userMessage(text: string) {
   return {
     id: "user-1",
@@ -68,27 +79,58 @@ function createMockStreamResponse(text: string, beforeStream?: () => Promise<voi
 describe("POST /api/chat", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv("CHAT_BASIC_USER", "testuser");
+    vi.stubEnv("CHAT_BASIC_PASSWORD", "testpass");
     mockCreateServerSupabaseClient.mockReturnValue({ from: vi.fn() });
+  });
+
+  it("returns 401 without Basic auth", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: [userMessage("Hello")] }),
+      }),
+    );
+
+    expect(response.status).toBe(401);
   });
 
   it("returns 400 when messages are missing", async () => {
     const response = await POST(
       new Request("http://localhost/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({}),
       }),
     );
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body.error).toBe("Missing messages");
+    expect(body.error).toBe("Invalid request");
+  });
+
+  it("returns 400 for malformed UIMessage payloads", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          messages: [{ id: "bad", role: "assistant", parts: [{ type: "tool-result", output: {} }] }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
   });
 
   it("streams 200 and invokes searchCustomers then getCustomerDossier", async () => {
     mockSearchCustomers.mockResolvedValue({
       success: true,
-      data: [{ id: "cust-1", first_name: "Eleanor", last_name: "Shellstrop" }],
+      data: {
+        query: "Eleanor",
+        matches: [{ customer: { id: "cust-1" }, match: "full" }],
+      },
     });
     mockGetCustomerDossier.mockResolvedValue({
       success: true,
@@ -113,7 +155,7 @@ describe("POST /api/chat", () => {
     const response = await POST(
       new Request("http://localhost/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           messages: [userMessage("Tell me about Eleanor")],
         }),
@@ -136,19 +178,25 @@ describe("POST /api/chat", () => {
   });
 
   it("handles no-match path with 200 and empty search results", async () => {
-    mockSearchCustomers.mockResolvedValue({ success: true, data: [] });
+    mockSearchCustomers.mockResolvedValue({
+      success: true,
+      data: { query: "Peterson", matches: [] },
+    });
 
     mockStreamText.mockImplementation(({ tools }: { tools: Record<string, ExecutableTool> }) =>
       createMockStreamResponse("No matching records were found.", async () => {
         const searchResult = await tools.searchCustomers.execute({ query: "Peterson" });
-        expect(searchResult).toEqual({ success: true, data: [] });
+        expect(searchResult).toEqual({
+          success: true,
+          data: { query: "Peterson", matches: [] },
+        });
       }),
     );
 
     const response = await POST(
       new Request("http://localhost/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           messages: [userMessage("Find Madam Peterson")],
         }),

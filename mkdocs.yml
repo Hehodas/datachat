@@ -1,0 +1,81 @@
+﻿site_name: DataChat
+site_description: ChatGPT-style Q&A over a telecom CRM in Supabase
+site_url: https://hehodas.github.io/datachat/
+repo_url: https://github.com/Hehodas/datachat
+repo_name: Hehodas/datachat
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  font:
+    text: Inter
+    code: Roboto Mono
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Request flow: architecture/request-flow.md
+      - Agent loop: architecture/agent-loop.md
+  - Database:
+      - Schema: database/schema.md
+      - Tools: database/tools.md
+      - Data freshness: database/data-freshness.md
+  - Security: security.md
+  - API:
+      - POST /api/chat: api/chat.md
+  - Frontend: frontend/ui.md
+  - Testing: testing.md
+  - Deployment: deployment.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Hehodas/datachat

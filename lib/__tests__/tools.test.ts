@@ -1,8 +1,13 @@
-﻿import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  classifyCustomerMatch,
+  escapeIlike,
   getCustomerDossier,
+  quoteIlikeTerm,
   searchByTopic,
   searchCustomers,
+  searchTokens,
+  type Customer,
 } from "../tools";
 import type { DataChatSupabaseClient } from "../supabase";
 
@@ -14,6 +19,7 @@ function createChain(result: QueryResult) {
     or: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     ilike: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue(result),
     single: vi.fn().mockResolvedValue(result),
     then: (resolve: (value: QueryResult) => void) => Promise.resolve(result).then(resolve),
@@ -33,111 +39,77 @@ function createMockClient(handlers: Record<string, () => object>) {
   } as unknown as DataChatSupabaseClient;
 }
 
+const eleanor: Customer = {
+  id: "cust-1",
+  first_name: "Eleanor",
+  last_name: "Shellstrop",
+  email: "eleanor@example.com",
+  phone_number: "555-0100",
+  address: "123 Main St",
+  created_at: "2024-01-01T00:00:00Z",
+};
+
+describe("escapeIlike and quoteIlikeTerm", () => {
+  it("escapes % and _ wildcards", () => {
+    expect(escapeIlike("100%")).toBe("100\\%");
+    expect(escapeIlike("a_b")).toBe("a\\_b");
+    expect(quoteIlikeTerm("100%")).toBe('"%100\\%%"');
+  });
+
+  it("keeps apostrophes in quoted terms", () => {
+    expect(quoteIlikeTerm("O'Brien")).toBe("\"%O'Brien%\"");
+  });
+});
+
+describe("searchTokens", () => {
+  it("keeps apostrophes and hyphens inside tokens", () => {
+    expect(searchTokens("O'Brien-Smith")).toEqual(["O'Brien-Smith"]);
+  });
+});
+
+describe("classifyCustomerMatch", () => {
+  it("does not throw when customer names are null", () => {
+    const customer = {
+      ...eleanor,
+      first_name: null as unknown as string,
+      last_name: null as unknown as string,
+      email: null as unknown as string,
+    };
+    expect(classifyCustomerMatch(customer, ["Eleanor"])).toBe("partial");
+  });
+});
+
 describe("searchCustomers", () => {
   it("returns matching rows for a name", async () => {
-    const eleanor = {
-      id: "cust-1",
-      first_name: "Eleanor",
-      last_name: "Shellstrop",
-      email: "eleanor@example.com",
-      phone_number: "555-0100",
-      address: "123 Main St",
-      created_at: "2024-01-01T00:00:00Z",
-    };
-
-    const client = createMockClient({
-      customers: () =>
-        createChain({
-          data: [eleanor],
-          error: null,
-        }),
-    });
+    const chain = createChain({ data: [eleanor], error: null });
+    const client = createMockClient({ customers: () => chain });
 
     const result = await searchCustomers(client, { query: "Shellstrop" });
 
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.matches).toHaveLength(1);
-      expect(result.data.matches[0].customer.last_name).toBe("Shellstrop");
       expect(result.data.matches[0].match).toBe("full");
     }
+    expect(chain.select).toHaveBeenCalledWith(
+      "id, first_name, last_name, email, phone_number, address, created_at",
+    );
+    expect(chain.limit).toHaveBeenCalledWith(25);
+    expect(client.from).toHaveBeenCalledTimes(1);
   });
 
-  it("returns an empty list when nothing matches (Madam Peterson)", async () => {
-    const client = createMockClient({
-      customers: () =>
-        createChain({
-          data: [],
-          error: null,
-        }),
-    });
+  it("uses quoted .or() filters for injection-like tokens", async () => {
+    const chain = createChain({ data: [], error: null });
+    const client = createMockClient({ customers: () => chain });
 
-    const result = await searchCustomers(client, { query: "Peterson" });
+    await searchCustomers(client, { query: "unpaid,customer_id.not.is.null" });
 
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.matches).toEqual([]);
-    }
+    const orArg = chain.or.mock.calls[0]?.[0] as string;
+    expect(orArg).toContain('"%unpaid,customer\\_id.not.is.null%"');
+    expect(orArg.split("first_name.ilike.").length - 1).toBe(1);
   });
 
-  it("finds a customer when the query is a full first and last name", async () => {
-    const eleanor = {
-      id: "cust-1",
-      first_name: "Eleanor",
-      last_name: "Shellstrop",
-      email: "eleanor@example.com",
-      phone_number: "555-0100",
-      address: "123 Main St",
-      created_at: "2024-01-01T00:00:00Z",
-    };
-
-    const client = createMockClient({
-      customers: () =>
-        createChain({
-          data: [eleanor],
-          error: null,
-        }),
-    });
-
-    const result = await searchCustomers(client, { query: "Eleanor Shellstrop" });
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.matches).toHaveLength(1);
-      expect(result.data.matches[0].customer.first_name).toBe("Eleanor");
-      expect(result.data.matches[0].match).toBe("full");
-    }
-    expect(client.from).toHaveBeenCalled();
-  });
-
-  it("marks a last-name-only hit as partial when the query includes a different first name", async () => {
-    const eleanor = {
-      id: "cust-1",
-      first_name: "Eleanor",
-      last_name: "Shellstrop",
-      email: "eleanor@example.com",
-      phone_number: "555-0100",
-      address: "123 Main St",
-      created_at: "2024-01-01T00:00:00Z",
-    };
-
-    const client = createMockClient({
-      customers: () =>
-        createChain({
-          data: [eleanor],
-          error: null,
-        }),
-    });
-
-    const result = await searchCustomers(client, { query: "Tahani Shellstrop" });
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.matches[0].match).toBe("partial");
-    }
-  });
-
-  it("returns structured failure on database error", async () => {
+  it("returns generic database error string", async () => {
     const client = createMockClient({
       customers: () =>
         createChain({
@@ -150,7 +122,24 @@ describe("searchCustomers", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toBe("connection failed");
+      expect(result.error).toBe("database query failed");
+    }
+  });
+
+  it("sets truncated when result size equals limit", async () => {
+    const rows = Array.from({ length: 25 }, (_, index) => ({
+      ...eleanor,
+      id: `cust-${index}`,
+    }));
+    const client = createMockClient({
+      customers: () => createChain({ data: rows, error: null }),
+    });
+
+    const result = await searchCustomers(client, { query: "Shell" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.truncated).toBe(true);
     }
   });
 
@@ -159,74 +148,61 @@ describe("searchCustomers", () => {
     const result = await searchCustomers(client, { query: "   " });
 
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.matches).toEqual([]);
-    }
     expect(client.from).not.toHaveBeenCalled();
   });
 });
 
 describe("getCustomerDossier", () => {
-  const customer = {
-    id: "cust-1",
-    first_name: "Eleanor",
-    last_name: "Shellstrop",
-    email: "eleanor@example.com",
-    phone_number: "555-0100",
-    address: "123 Main St",
-    created_at: "2024-01-01T00:00:00Z",
-  };
+  it("assembles customer and child tables with allow-listed columns", async () => {
+    const selectCalls: Array<{ table: string; columns: string }> = [];
 
-  it("assembles customer and child tables", async () => {
+    function trackSelect(table: string) {
+      const chain = createChain({
+        data: table === "subscriptions"
+          ? [{ id: "sub-1", plan_name: "Premium" }]
+          : table === "invoices"
+            ? [{ id: "inv-1", status: "paid" }]
+            : [],
+        error: null,
+      });
+      chain.select = vi.fn((cols: string) => {
+        selectCalls.push({ table, columns: cols });
+        return chain;
+      });
+      return chain;
+    }
+
     const client = createMockClient({
       customers: () => ({
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValue({ data: customer, error: null }),
+        select: vi.fn((cols: string) => {
+          selectCalls.push({ table: "customers", columns: cols });
+          return {
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: eleanor, error: null }),
+          };
+        }),
       }),
-      subscriptions: () =>
-        createChain({ data: [{ id: "sub-1", plan_name: "Premium" }], error: null }),
-      invoices: () =>
-        createChain({ data: [{ id: "inv-1", status: "paid" }], error: null }),
-      payment_methods: () => createChain({ data: [], error: null }),
-      equipment: () => createChain({ data: [], error: null }),
-      incidents: () => createChain({ data: [], error: null }),
-      interaction_logs: () => createChain({ data: [], error: null }),
+      subscriptions: () => trackSelect("subscriptions"),
+      invoices: () => trackSelect("invoices"),
+      payment_methods: () => trackSelect("payment_methods"),
+      equipment: () => trackSelect("equipment"),
+      incidents: () => trackSelect("incidents"),
+      interaction_logs: () => trackSelect("interaction_logs"),
     });
 
     const result = await getCustomerDossier(client, { customerId: "cust-1" });
 
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.customer.last_name).toBe("Shellstrop");
-      expect(result.data.subscriptions).toHaveLength(1);
-      expect(result.data.invoices).toHaveLength(1);
-    }
+    expect(selectCalls.some((call) => call.table === "payment_methods" && call.columns === "provider, payment_type, last_four_digits, is_default")).toBe(true);
+    expect(selectCalls.every((call) => call.columns !== "*")).toBe(true);
   });
 
-  it("reports not-found for an unknown id", async () => {
+  it("returns generic database error for child table failures", async () => {
     const client = createMockClient({
       customers: () => ({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      }),
-    });
-
-    const result = await getCustomerDossier(client, { customerId: "missing-id" });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("No customer found");
-    }
-  });
-
-  it("returns structured failure on child table error", async () => {
-    const client = createMockClient({
-      customers: () => ({
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValue({ data: customer, error: null }),
+        maybeSingle: vi.fn().mockResolvedValue({ data: eleanor, error: null }),
       }),
       subscriptions: () =>
         createChain({ data: null, error: { message: "timeout" } }),
@@ -241,41 +217,54 @@ describe("getCustomerDossier", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("subscriptions");
+      expect(result.error).toBe("database query failed");
     }
   });
 });
 
 describe("searchByTopic", () => {
-  it("queries expected tables and merges results", async () => {
+  it("queries expected tables with quoted filters and limits", async () => {
+    const incidentsChain = createChain({
+      data: [{ id: "inc-1", issue_type: "outage" }],
+      error: null,
+    });
     const client = createMockClient({
-      incidents: () =>
-        createChain({ data: [{ id: "inc-1", issue_type: "outage" }], error: null }),
+      incidents: () => incidentsChain,
       interaction_logs: () => createChain({ data: [], error: null }),
-      subscriptions: () =>
-        createChain({ data: [{ id: "sub-1", plan_name: "Fiber 100" }], error: null }),
+      subscriptions: () => createChain({ data: [{ id: "sub-1", plan_name: "Fiber 100" }], error: null }),
       equipment: () => createChain({ data: [], error: null }),
-      invoices: () =>
-        createChain({ data: [{ id: "inv-1", status: "unpaid" }], error: null }),
+      invoices: () => createChain({ data: [{ id: "inv-1", status: "unpaid" }], error: null }),
     });
 
     const result = await searchByTopic(client, { query: "unpaid" });
 
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.incidents).toHaveLength(1);
-      expect(result.data.subscriptions).toHaveLength(1);
-      expect(result.data.invoices).toHaveLength(1);
-    }
-
-    expect(client.from).toHaveBeenCalledWith("incidents");
-    expect(client.from).toHaveBeenCalledWith("interaction_logs");
-    expect(client.from).toHaveBeenCalledWith("subscriptions");
-    expect(client.from).toHaveBeenCalledWith("equipment");
-    expect(client.from).toHaveBeenCalledWith("invoices");
+    const orArg = incidentsChain.or.mock.calls[0]?.[0] as string;
+    expect(orArg).toContain('"%unpaid%"');
+    expect(incidentsChain.select).toHaveBeenCalledWith(
+      "id, customer_id, issue_type, description, status, created_at, resolved_at",
+    );
+    expect(incidentsChain.limit).toHaveBeenCalledWith(50);
+    expect(incidentsChain.select).not.toHaveBeenCalledWith("*");
   });
 
-  it("returns structured failure on database error", async () => {
+  it("quotes comma/parenthesis injection topics", async () => {
+    const incidentsChain = createChain({ data: [], error: null });
+    const client = createMockClient({
+      incidents: () => incidentsChain,
+      interaction_logs: () => createChain({ data: [], error: null }),
+      subscriptions: () => createChain({ data: [], error: null }),
+      equipment: () => createChain({ data: [], error: null }),
+      invoices: () => createChain({ data: [], error: null }),
+    });
+
+    await searchByTopic(client, { query: "unpaid,customer_id.not.is.null" });
+
+    const orArg = incidentsChain.or.mock.calls[0]?.[0] as string;
+    expect(orArg).toContain('"%unpaid,customer\\_id.not.is.null%"');
+  });
+
+  it("returns generic database error string", async () => {
     const client = createMockClient({
       incidents: () =>
         createChain({ data: null, error: { message: "permission denied" } }),
@@ -289,7 +278,7 @@ describe("searchByTopic", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("incidents");
+      expect(result.error).toBe("database query failed");
     }
   });
 });

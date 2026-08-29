@@ -1,0 +1,34 @@
+﻿---
+description: When an agent follows a project skill, it must update that skill with hurdles and durable knowledge so later agents do not repeat the same mistakes.
+alwaysApply: true
+---
+
+# Evolve skills from hurdles
+
+Project skills in `.cursor/skills/` are **writable playbooks**, not read-only docs. You may and must edit the skill you used in the same task. Do not wait for the user to ask. Do not leave the lesson only in chat.
+
+Do **not** edit Cursor built-in skills under `~/.cursor/skills-cursor/`.
+
+## When you must update the skill
+
+If this session **used** a project skill (you read its `SKILL.md` or followed its workflow) and any of these happened:
+
+- a command, path, or assumption in the skill was **wrong, missing, or incomplete**
+- a host/tool quirk blocked you (PowerShell, Docker Desktop, OneDrive, ports, auth, env loading)
+- a fix took more than a trivial retry
+
+Then **before you finish**, patch that skill.
+
+## Where to write it
+
+1. **Wrong standing instruction** → fix `SKILL.md` in place (facts, commands, don'ts).
+2. **Reusable failure** → add one Troubleshooting row in `reference.md` (create it if missing): **symptom → cause → what to do**.
+3. Merge duplicates. Do not append transcripts, dates, or "this agent found…".
+4. Keep `SKILL.md` under 500 lines. Never copy secrets, tokens, or `.env.local` values into the skill.
+
+## Example
+
+Skill said `curl`; PowerShell aliased it and the status check lied.
+
+- Change the command in `SKILL.md` to `curl.exe`
+- Troubleshooting: unexpected `curl` output → PowerShell alias → use `curl.exe`
