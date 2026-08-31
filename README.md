@@ -46,7 +46,7 @@ CHAT_BASIC_PASSWORD=
 
 `CHAT_BASIC_USER` and `CHAT_BASIC_PASSWORD` are required. If either is missing, every request is denied (fail closed). Never put them in a `NEXT_PUBLIC_` variable.
 
-`POST /api/chat` is also limited to about 20 requests per minute per IP.
+`POST /api/chat` is also limited to about 20 requests per minute per authenticated Basic user.
 
 Never commit `.env.local`. `.gitignore` already excludes `.env*` (except `.env.example`).
 

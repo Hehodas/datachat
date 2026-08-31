@@ -109,6 +109,10 @@ const INTERACTION_LOG_COLUMNS = "id, customer_id, channel, agent_notes, interact
 
 const CUSTOMER_SEARCH_LIMIT = 25;
 const CHILD_ROW_LIMIT = 50;
+const CUSTOMER_SEARCH_COLUMNS = ["first_name", "last_name", "email"] as const;
+const INCIDENT_TOPIC_COLUMNS = ["description", "issue_type"] as const;
+const SUBSCRIPTION_TOPIC_COLUMNS = ["plan_name", "service_category"] as const;
+const EQUIPMENT_TOPIC_COLUMNS = ["model_name", "device_type"] as const;
 
 const DB_ERROR = "database query failed";
 
@@ -129,10 +133,6 @@ export function escapeIlike(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/[%_]/g, "\\$&");
 }
 
-export function quoteIlikeTerm(term: string): string {
-  return `"%${escapeIlike(term)}%"`;
-}
-
 function ilikePattern(query: string): string {
   return `%${escapeIlike(query)}%`;
 }
@@ -143,19 +143,6 @@ export function searchTokens(query: string): string[] {
     .split(/\s+/)
     .map((token) => token.replace(/^[.,;:"']+|[.,;:"']+$/g, ""))
     .filter((token) => token.length > 0);
-}
-
-function orFilterForTerms(terms: string[]): string {
-  return terms
-    .flatMap((term) => {
-      const pattern = quoteIlikeTerm(term);
-      return [
-        `first_name.ilike.${pattern}`,
-        `last_name.ilike.${pattern}`,
-        `email.ilike.${pattern}`,
-      ];
-    })
-    .join(",");
 }
 
 function containsInsensitive(haystack: string, needle: string): boolean {
@@ -200,6 +187,64 @@ function logDbError(context: string, message: string): void {
   console.error(`[tools] ${context}: ${message}`);
 }
 
+function dedupeById<T extends { id: string }>(rows: T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const row of rows) {
+    byId.set(row.id, row);
+  }
+  return Array.from(byId.values());
+}
+
+type MergedSearchRows<T extends { id: string }> = {
+  rows: T[];
+  truncated: boolean;
+};
+
+async function searchTableByColumns<T extends { id: string }>(
+  client: DataChatSupabaseClient,
+  {
+    table,
+    columns,
+    queryColumns,
+    query,
+    limit,
+    context,
+  }: {
+    table: string;
+    columns: string;
+    queryColumns: readonly string[];
+    query: string;
+    limit: number;
+    context: string;
+  },
+): Promise<ToolResult<MergedSearchRows<T>>> {
+  const pattern = ilikePattern(query);
+  const results = await Promise.all(
+    queryColumns.map((queryColumn) =>
+      client.from(table).select(columns).ilike(queryColumn, pattern).limit(limit),
+    ),
+  );
+
+  for (const result of results) {
+    if (result.error) {
+      logDbError(context, result.error.message);
+      return { success: false, error: DB_ERROR };
+    }
+  }
+
+  const mergedRows = dedupeById(results.flatMap((result) => (result.data ?? []) as T[]));
+  const truncated =
+    mergedRows.length > limit || results.some((result) => (result.data?.length ?? 0) >= limit);
+
+  return {
+    success: true,
+    data: {
+      rows: mergedRows.slice(0, limit),
+      truncated,
+    },
+  };
+}
+
 export async function searchCustomers(
   client: DataChatSupabaseClient,
   { query }: { query: string },
@@ -214,19 +259,31 @@ export async function searchCustomers(
     return { success: true, data: { query: trimmed, matches: [] } };
   }
 
-  const { data: tokenRows, error: tokenError } = await client
-    .from("customers")
-    .select(CUSTOMER_COLUMNS)
-    .or(orFilterForTerms(tokens))
-    .limit(CUSTOMER_SEARCH_LIMIT);
+  const tokenSearches = await Promise.all(
+    tokens.map((token) =>
+      searchTableByColumns<Customer>(client, {
+        table: "customers",
+        columns: CUSTOMER_COLUMNS,
+        queryColumns: CUSTOMER_SEARCH_COLUMNS,
+        query: token,
+        limit: CUSTOMER_SEARCH_LIMIT,
+        context: "searchCustomers",
+      }),
+    ),
+  );
 
-  if (tokenError) {
-    logDbError("searchCustomers", tokenError.message);
-    return { success: false, error: DB_ERROR };
+  for (const tokenSearch of tokenSearches) {
+    if (!tokenSearch.success) {
+      return tokenSearch;
+    }
   }
 
-  const rows = (tokenRows ?? []) as Customer[];
-  const truncated = rows.length >= CUSTOMER_SEARCH_LIMIT;
+  const rows = dedupeById(
+    tokenSearches.flatMap((tokenSearch) => (tokenSearch.success ? tokenSearch.data.rows : [])),
+  );
+  const truncated =
+    rows.length > CUSTOMER_SEARCH_LIMIT ||
+    tokenSearches.some((tokenSearch) => tokenSearch.success && tokenSearch.data.truncated);
 
   const matches: CustomerSearchHit[] = rows
     .map((customer) => ({
@@ -241,12 +298,13 @@ export async function searchCustomers(
         `${b.customer.last_name ?? ""} ${b.customer.first_name ?? ""}`,
       );
     });
+  const cappedMatches = matches.slice(0, CUSTOMER_SEARCH_LIMIT);
 
   return {
     success: true,
     data: {
       query: trimmed,
-      matches,
+      matches: cappedMatches,
       ...(truncated ? { truncated: true } : {}),
     },
   };
@@ -371,36 +429,44 @@ export async function searchByTopic(
     };
   }
 
-  const pattern = quoteIlikeTerm(trimmed);
   const agentNotesPattern = ilikePattern(trimmed);
 
   const [
-    incidentsResult,
+    incidentsSearch,
     interactionLogsResult,
-    subscriptionsResult,
-    equipmentResult,
+    subscriptionsSearch,
+    equipmentSearch,
     invoicesResult,
   ] = await Promise.all([
-    client
-      .from("incidents")
-      .select(INCIDENT_COLUMNS)
-      .or(`description.ilike.${pattern},issue_type.ilike.${pattern}`)
-      .limit(CHILD_ROW_LIMIT),
+    searchTableByColumns<Incident>(client, {
+      table: "incidents",
+      columns: INCIDENT_COLUMNS,
+      queryColumns: INCIDENT_TOPIC_COLUMNS,
+      query: trimmed,
+      limit: CHILD_ROW_LIMIT,
+      context: "searchByTopic/incidents",
+    }),
     client
       .from("interaction_logs")
       .select(INTERACTION_LOG_COLUMNS)
       .ilike("agent_notes", agentNotesPattern)
       .limit(CHILD_ROW_LIMIT),
-    client
-      .from("subscriptions")
-      .select(SUBSCRIPTION_COLUMNS)
-      .or(`plan_name.ilike.${pattern},service_category.ilike.${pattern}`)
-      .limit(CHILD_ROW_LIMIT),
-    client
-      .from("equipment")
-      .select(EQUIPMENT_COLUMNS)
-      .or(`model_name.ilike.${pattern},device_type.ilike.${pattern}`)
-      .limit(CHILD_ROW_LIMIT),
+    searchTableByColumns<Subscription>(client, {
+      table: "subscriptions",
+      columns: SUBSCRIPTION_COLUMNS,
+      queryColumns: SUBSCRIPTION_TOPIC_COLUMNS,
+      query: trimmed,
+      limit: CHILD_ROW_LIMIT,
+      context: "searchByTopic/subscriptions",
+    }),
+    searchTableByColumns<Equipment>(client, {
+      table: "equipment",
+      columns: EQUIPMENT_COLUMNS,
+      queryColumns: EQUIPMENT_TOPIC_COLUMNS,
+      query: trimmed,
+      limit: CHILD_ROW_LIMIT,
+      context: "searchByTopic/equipment",
+    }),
     client
       .from("invoices")
       .select(INVOICE_COLUMNS)
@@ -408,30 +474,37 @@ export async function searchByTopic(
       .limit(CHILD_ROW_LIMIT),
   ]);
 
-  const settled = [
-    { key: "incidents" as const, result: incidentsResult },
-    { key: "interaction_logs" as const, result: interactionLogsResult },
-    { key: "subscriptions" as const, result: subscriptionsResult },
-    { key: "equipment" as const, result: equipmentResult },
-    { key: "invoices" as const, result: invoicesResult },
-  ];
-
-  for (const { key, result } of settled) {
-    if (result.error) {
-      logDbError(`searchByTopic/${key}`, result.error.message);
-      return { success: false, error: DB_ERROR };
-    }
+  if (!incidentsSearch.success) {
+    return incidentsSearch;
+  }
+  if (!subscriptionsSearch.success) {
+    return subscriptionsSearch;
+  }
+  if (!equipmentSearch.success) {
+    return equipmentSearch;
   }
 
-  const incidents = (incidentsResult.data ?? []) as Incident[];
+  if (interactionLogsResult.error) {
+    logDbError("searchByTopic/interaction_logs", interactionLogsResult.error.message);
+    return { success: false, error: DB_ERROR };
+  }
+  if (invoicesResult.error) {
+    logDbError("searchByTopic/invoices", invoicesResult.error.message);
+    return { success: false, error: DB_ERROR };
+  }
+
+  const incidents = incidentsSearch.data.rows;
   const interaction_logs = (interactionLogsResult.data ?? []) as InteractionLog[];
-  const subscriptions = (subscriptionsResult.data ?? []) as Subscription[];
-  const equipment = (equipmentResult.data ?? []) as Equipment[];
+  const subscriptions = subscriptionsSearch.data.rows;
+  const equipment = equipmentSearch.data.rows;
   const invoices = (invoicesResult.data ?? []) as Invoice[];
 
-  const truncated = settled.some(
-    ({ result }) => (result.data?.length ?? 0) >= CHILD_ROW_LIMIT,
-  );
+  const truncated =
+    incidentsSearch.data.truncated ||
+    subscriptionsSearch.data.truncated ||
+    equipmentSearch.data.truncated ||
+    (interactionLogsResult.data?.length ?? 0) >= CHILD_ROW_LIMIT ||
+    (invoicesResult.data?.length ?? 0) >= CHILD_ROW_LIMIT;
 
   return {
     success: true,

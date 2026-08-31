@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { RATE_LIMIT_MAX, resetRateLimiter } from "@/lib/access";
 
 const mockSearchCustomers = vi.fn();
 const mockGetCustomerDossier = vi.fn();
@@ -79,6 +80,7 @@ function createMockStreamResponse(text: string, beforeStream?: () => Promise<voi
 describe("POST /api/chat", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetRateLimiter();
     vi.stubEnv("CHAT_BASIC_USER", "testuser");
     vi.stubEnv("CHAT_BASIC_PASSWORD", "testpass");
     mockCreateServerSupabaseClient.mockReturnValue({ from: vi.fn() });
@@ -94,6 +96,35 @@ describe("POST /api/chat", () => {
     );
 
     expect(response.status).toBe(401);
+  });
+
+  it("returns 429 when the chat rate limit is exceeded", async () => {
+    mockStreamText.mockImplementation(() => createMockStreamResponse("ok"));
+    const headers = authHeaders({ "x-forwarded-for": "203.0.113.10" });
+    const body = JSON.stringify({ messages: [userMessage("Hello")] });
+
+    for (let i = 0; i < RATE_LIMIT_MAX; i += 1) {
+      const response = await POST(
+        new Request("http://localhost/api/chat", {
+          method: "POST",
+          headers,
+          body,
+        }),
+      );
+      expect(response.status).toBe(200);
+    }
+
+    const blocked = await POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers,
+        body,
+      }),
+    );
+
+    expect(blocked.status).toBe(429);
+    expect(await blocked.json()).toEqual({ error: "Too many requests" });
+    expect(mockStreamText).toHaveBeenCalledTimes(RATE_LIMIT_MAX);
   });
 
   it("returns 400 when messages are missing", async () => {
