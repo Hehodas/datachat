@@ -3,7 +3,6 @@ import {
   classifyCustomerMatch,
   escapeIlike,
   getCustomerDossier,
-  quoteIlikeTerm,
   searchByTopic,
   searchCustomers,
   searchTokens,
@@ -49,15 +48,14 @@ const eleanor: Customer = {
   created_at: "2024-01-01T00:00:00Z",
 };
 
-describe("escapeIlike and quoteIlikeTerm", () => {
+describe("escapeIlike", () => {
   it("escapes % and _ wildcards", () => {
     expect(escapeIlike("100%")).toBe("100\\%");
     expect(escapeIlike("a_b")).toBe("a\\_b");
-    expect(quoteIlikeTerm("100%")).toBe('"%100\\%%"');
   });
 
-  it("keeps apostrophes in quoted terms", () => {
-    expect(quoteIlikeTerm("O'Brien")).toBe("\"%O'Brien%\"");
+  it("keeps apostrophes as literals", () => {
+    expect(escapeIlike("O'Brien")).toBe("O'Brien");
   });
 });
 
@@ -95,18 +93,23 @@ describe("searchCustomers", () => {
       "id, first_name, last_name, email, phone_number, address, created_at",
     );
     expect(chain.limit).toHaveBeenCalledWith(25);
-    expect(client.from).toHaveBeenCalledTimes(1);
+    expect(client.from).toHaveBeenCalledTimes(3);
   });
 
-  it("uses quoted .or() filters for injection-like tokens", async () => {
+  it("uses allow-listed .ilike filters for injection-like tokens", async () => {
     const chain = createChain({ data: [], error: null });
     const client = createMockClient({ customers: () => chain });
 
     await searchCustomers(client, { query: "unpaid,customer_id.not.is.null" });
 
-    const orArg = chain.or.mock.calls[0]?.[0] as string;
-    expect(orArg).toContain('"%unpaid,customer\\_id.not.is.null%"');
-    expect(orArg.split("first_name.ilike.").length - 1).toBe(1);
+    expect(chain.or).not.toHaveBeenCalled();
+    expect(chain.ilike.mock.calls).toEqual(
+      expect.arrayContaining([
+        ["first_name", "%unpaid,customer\\_id.not.is.null%"],
+        ["last_name", "%unpaid,customer\\_id.not.is.null%"],
+        ["email", "%unpaid,customer\\_id.not.is.null%"],
+      ]),
+    );
   });
 
   it("returns generic database error string", async () => {
@@ -223,7 +226,7 @@ describe("getCustomerDossier", () => {
 });
 
 describe("searchByTopic", () => {
-  it("queries expected tables with quoted filters and limits", async () => {
+  it("queries expected tables with allow-listed ilike filters and limits", async () => {
     const incidentsChain = createChain({
       data: [{ id: "inc-1", issue_type: "outage" }],
       error: null,
@@ -239,8 +242,13 @@ describe("searchByTopic", () => {
     const result = await searchByTopic(client, { query: "unpaid" });
 
     expect(result.success).toBe(true);
-    const orArg = incidentsChain.or.mock.calls[0]?.[0] as string;
-    expect(orArg).toContain('"%unpaid%"');
+    expect(incidentsChain.or).not.toHaveBeenCalled();
+    expect(incidentsChain.ilike.mock.calls).toEqual(
+      expect.arrayContaining([
+        ["description", "%unpaid%"],
+        ["issue_type", "%unpaid%"],
+      ]),
+    );
     expect(incidentsChain.select).toHaveBeenCalledWith(
       "id, customer_id, issue_type, description, status, created_at, resolved_at",
     );
@@ -260,8 +268,13 @@ describe("searchByTopic", () => {
 
     await searchByTopic(client, { query: "unpaid,customer_id.not.is.null" });
 
-    const orArg = incidentsChain.or.mock.calls[0]?.[0] as string;
-    expect(orArg).toContain('"%unpaid,customer\\_id.not.is.null%"');
+    expect(incidentsChain.or).not.toHaveBeenCalled();
+    expect(incidentsChain.ilike.mock.calls).toEqual(
+      expect.arrayContaining([
+        ["description", "%unpaid,customer\\_id.not.is.null%"],
+        ["issue_type", "%unpaid,customer\\_id.not.is.null%"],
+      ]),
+    );
   });
 
   it("returns generic database error string", async () => {

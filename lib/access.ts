@@ -109,6 +109,14 @@ export function getClientIp(request: Request): string {
   return "unknown";
 }
 
+function rateLimitKeyForAuthorizedRequest(request: Request): string {
+  const parsed = decodeBasicCredentials(request.headers.get("authorization"));
+  if (parsed?.user) {
+    return `basic-user:${parsed.user.slice(0, 128)}`;
+  }
+  return `ip:${getClientIp(request)}`;
+}
+
 export function consumeRateLimit(ip: string, now = Date.now()): boolean {
   if (rateBuckets.size > 10_000) {
     for (const [key, bucket] of rateBuckets) {
@@ -156,7 +164,7 @@ export function enforceChatAccess(request: Request): Response | null {
     return unauthorizedResponse("json");
   }
 
-  if (!consumeRateLimit(getClientIp(request))) {
+  if (!consumeRateLimit(rateLimitKeyForAuthorizedRequest(request))) {
     return tooManyRequestsResponse("json");
   }
 

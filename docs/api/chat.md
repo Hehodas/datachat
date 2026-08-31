@@ -11,7 +11,7 @@ Content-Type: application/json
 
 Missing or wrong credentials → **401** with `WWW-Authenticate: Basic realm="DataChat"`.
 
-Also subject to the ~20 req/min IP rate limit → **429**.
+Also subject to the ~20 req/min authenticated-identity rate limit → **429**.
 
 ## Request body
 

@@ -23,13 +23,12 @@ Never expose these as `NEXT_PUBLIC_*` — they must stay server-side. The browse
 
 ## Rate limiting
 
-`POST /api/*` is limited to about **20 requests per minute per IP** (`RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` in `lib/access.ts`).
+`POST /api/chat` is limited to about **20 requests per minute per authenticated identity** (`RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` in `lib/access.ts`).
 
-- IP is taken from `x-forwarded-for` (first hop) or `x-real-ip`, else `"unknown"`.
+- The limiter key uses the authenticated Basic username, with client IP only as a fallback key.
+- IP fallback is taken from `x-forwarded-for` (first hop) or `x-real-ip`, else `"unknown"`.
 - Buckets live in process memory (fine for a single Node instance; not shared across serverless replicas unless you add Redis or similar).
 - Exceeded limit → **429 Too many requests**.
-
-Middleware applies the limit for `POST /api/*`. The chat route also calls `consumeRateLimit` again when using `enforceChatAccess`.
 
 ## Secrets handling
 

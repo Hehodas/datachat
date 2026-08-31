@@ -40,7 +40,7 @@ CHAT_BASIC_PASSWORD=
 !!! danger "Secrets"
     Never commit `.env.local`. `.gitignore` excludes `.env*` (except `.env.example`).
 
-`POST /api/chat` is also limited to about **20 requests per minute per IP**.
+`POST /api/chat` is also limited to about **20 requests per minute per authenticated Basic user**.
 
 ## Run the app
 

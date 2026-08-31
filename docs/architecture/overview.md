@@ -26,8 +26,8 @@ flowchart LR
 
 | Path | Role |
 | --- | --- |
-| `middleware.ts` | HTTP Basic Auth + rate limit for `POST /api/*` |
-| `lib/access.ts` | Auth helpers, timing-safe credential check, IP rate limiter |
+| `middleware.ts` | HTTP Basic Auth gate for pages and API routes |
+| `lib/access.ts` | Auth helpers, timing-safe credential check, chat rate limiter |
 | `lib/chat-request.ts` | Validate and sanitize incoming chat messages |
 | `lib/supabase.ts` | Cached server Supabase client (secret key, no session) |
 | `lib/tools.ts` | `searchCustomers`, `getCustomerDossier`, `searchByTopic` |

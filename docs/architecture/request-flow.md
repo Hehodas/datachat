@@ -59,7 +59,7 @@ sequenceDiagram
 
 ### Backend (`app/api/chat/route.ts`)
 
-1. **`enforceChatAccess`** — Basic Auth + rate limit (defense in depth; middleware already checked).
+1. **`enforceChatAccess`** — Basic Auth + per-identity rate limit.
 2. **`parseChatRequest`** — Zod validation; keeps text parts only; rejects malformed bodies with **400**.
 3. **`createServerSupabaseClient()`** — secret key client (bypasses RLS).
 4. **`streamText`** — agentic tool loop with GPT-4o, capped at **5 steps** (`stopWhen: stepCountIs(5)`).
