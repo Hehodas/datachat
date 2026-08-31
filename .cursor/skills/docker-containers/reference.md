@@ -110,6 +110,7 @@ Ignoring `docs/` and `*.md` keeps the image small. Do **not** ignore files the N
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
+| `RUN npm run build` fails with a TypeScript error | `next build` typechecks; `next dev` does not | Fix the error on the host (`npx tsc --noEmit`), then rebuild |
 | Build fails: no `.next/standalone` | `output: "standalone"` missing | Add it to `next.config.ts`, rebuild |
 | Container running, every request 401 even with `-u` | Wrong user/pass, or Compose not loading `.env.local` | Confirm `env_file` path; `docker compose exec datachat sh` then `env` (do not paste secrets into chat) |
 | Container running, 401 and logs say credentials not set | `.env.local` missing/empty or not passed | Fix host file; `docker compose up -d` (no rebuild) |

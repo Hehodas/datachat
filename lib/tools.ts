@@ -1,4 +1,4 @@
-import type { DataChatSupabaseClient } from "./supabase";
+﻿import type { DataChatSupabaseClient } from "./supabase";
 
 export type ToolSuccess<T> = { success: true; data: T };
 export type ToolFailure = { success: false; error: string };
@@ -187,6 +187,10 @@ function logDbError(context: string, message: string): void {
   console.error(`[tools] ${context}: ${message}`);
 }
 
+function typedRows<T>(data: unknown): T[] {
+  return Array.isArray(data) ? (data as T[]) : [];
+}
+
 function dedupeById<T extends { id: string }>(rows: T[]): T[] {
   const byId = new Map<string, T>();
   for (const row of rows) {
@@ -232,7 +236,7 @@ async function searchTableByColumns<T extends { id: string }>(
     }
   }
 
-  const mergedRows = dedupeById(results.flatMap((result) => (result.data ?? []) as T[]));
+  const mergedRows = dedupeById(results.flatMap((result) => typedRows<T>(result.data)));
   const truncated =
     mergedRows.length > limit || results.some((result) => (result.data?.length ?? 0) >= limit);
 
@@ -385,12 +389,12 @@ export async function getCustomerDossier(
     }
   }
 
-  const subscriptions = (subscriptionsResult.data ?? []) as Subscription[];
-  const invoices = (invoicesResult.data ?? []) as Invoice[];
-  const payment_methods = (paymentMethodsResult.data ?? []) as PaymentMethod[];
-  const equipment = (equipmentResult.data ?? []) as Equipment[];
-  const incidents = (incidentsResult.data ?? []) as Incident[];
-  const interaction_logs = (interactionLogsResult.data ?? []) as InteractionLog[];
+  const subscriptions = typedRows<Subscription>(subscriptionsResult.data);
+  const invoices = typedRows<Invoice>(invoicesResult.data);
+  const payment_methods = typedRows<PaymentMethod>(paymentMethodsResult.data);
+  const equipment = typedRows<Equipment>(equipmentResult.data);
+  const incidents = typedRows<Incident>(incidentsResult.data);
+  const interaction_logs = typedRows<InteractionLog>(interactionLogsResult.data);
 
   const truncated = results.some(
     ({ result }) => (result.data?.length ?? 0) >= CHILD_ROW_LIMIT,
@@ -399,7 +403,7 @@ export async function getCustomerDossier(
   return {
     success: true,
     data: {
-      customer: customer as Customer,
+      customer: customer as unknown as Customer,
       subscriptions,
       invoices,
       payment_methods,
@@ -494,10 +498,10 @@ export async function searchByTopic(
   }
 
   const incidents = incidentsSearch.data.rows;
-  const interaction_logs = (interactionLogsResult.data ?? []) as InteractionLog[];
+  const interaction_logs = typedRows<InteractionLog>(interactionLogsResult.data);
   const subscriptions = subscriptionsSearch.data.rows;
   const equipment = equipmentSearch.data.rows;
-  const invoices = (invoicesResult.data ?? []) as Invoice[];
+  const invoices = typedRows<Invoice>(invoicesResult.data);
 
   const truncated =
     incidentsSearch.data.truncated ||
